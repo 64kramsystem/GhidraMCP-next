@@ -38,15 +38,17 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Find latest Ghidra 12.0.x release
+    - name: Find latest Ghidra 12.1 release
       run: |
         GHIDRA_URL=$(gh api repos/NationalSecurityAgency/ghidra/releases \
-          --jq '[.[] | select(.tag_name | startswith("Ghidra_12.0"))][0].assets[0].browser_download_url')
+          --jq '[.[] | select(.tag_name | startswith("Ghidra_12.1"))][0].assets
+            | map(select(.name | test("^ghidra_12\\.1(?:\\.[0-9]+)?_PUBLIC_[0-9]+\\.zip$")))
+            | .[0].browser_download_url')
         echo "GHIDRA_URL=$GHIDRA_URL" >> "$GITHUB_ENV"
-        # Extract dir name: ghidra_12.0.4_PUBLIC (strip date suffix and .zip)
+        # Extract dir name: ghidra_12.1_PUBLIC (strip date suffix and .zip)
         GHIDRA_DIR=$(basename "$GHIDRA_URL" .zip | sed 's/_[0-9]*$//')
         echo "GHIDRA_DIR=$GHIDRA_DIR" >> "$GITHUB_ENV"
-        # Extract version: ghidra_12.0.4_PUBLIC -> 12.0.4
+        # Extract version: ghidra_12.1_PUBLIC -> 12.1
         GHIDRA_VERSION=$(echo "$GHIDRA_DIR" | sed 's/ghidra_\(.*\)_PUBLIC/\1/')
         echo "GHIDRA_VERSION=$GHIDRA_VERSION" >> "$GITHUB_ENV"
         echo "Resolved Ghidra release: $GHIDRA_DIR (version $GHIDRA_VERSION)"

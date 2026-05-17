@@ -4,10 +4,10 @@ Fork of [LaurieWired/GhidraMCP](https://github.com/LaurieWired/GhidraMCP), updat
 
 ## Changes from upstream
 
-- Java 21 / Ghidra 12.0.x compatibility
+- Java 21 / artifacts built for the latest exact Ghidra 12.1 release
 - Replaced deprecated `CodeUnit` comment constants with `CommentType` enum
 - Fixed `renameData` to work on addresses without defined data
-- CI builds against latest Ghidra 12.0.x with automated releases
+- CI follows the latest Ghidra 12.1 release and publishes version-matched artifacts
 - Integration test suite (runs headless in CI)
 
 ## Installation
@@ -17,6 +17,8 @@ Download the latest [release](https://github.com/64kramsystem/GhidraMCP-next/rel
 1. File > Install Extensions > `+` > select the ZIP
 2. Restart Ghidra
 3. File > Configure > Developer > enable GhidraMCPPlugin
+
+Each release ZIP targets the exact Ghidra version named in the release title; install the artifact matching your Ghidra build.
 
 The plugin starts an HTTP server on port 8080 (configurable via Edit > Tool Options > GhidraMCP HTTP Server).
 
