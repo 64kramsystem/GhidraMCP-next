@@ -41,7 +41,7 @@ jobs:
     - name: Find latest Ghidra 12.1 release
       run: |
         GHIDRA_URL=$(gh api repos/NationalSecurityAgency/ghidra/releases \
-          --jq '[.[] | select(.tag_name | startswith("Ghidra_12.1"))][0].assets
+          --jq '[.[] | select(.tag_name | test("^Ghidra_12\\.1(?:\\.[0-9]+)?_build$"))][0].assets
             | map(select(.name | test("^ghidra_12\\.1(?:\\.[0-9]+)?_PUBLIC_[0-9]+\\.zip$")))
             | .[0].browser_download_url')
         echo "GHIDRA_URL=$GHIDRA_URL" >> "$GITHUB_ENV"
