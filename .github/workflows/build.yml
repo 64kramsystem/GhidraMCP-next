@@ -16,6 +16,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      ghidra-version: ${{ steps.ghidra.outputs.version }}
     env:
       GHIDRA_LIBS: >-
         Features/Base/lib/Base.jar
@@ -37,6 +39,7 @@ jobs:
         cache: maven
 
     - name: Find latest Ghidra 12.1 release
+      id: ghidra
       run: |
         GHIDRA_URL=$(gh api repos/NationalSecurityAgency/ghidra/releases \
           --jq '[.[] | select(.tag_name | test("^Ghidra_12\\.1(?:\\.[0-9]+)?_build$"))][0].assets
@@ -49,6 +52,7 @@ jobs:
         # Extract version: ghidra_12.1_PUBLIC -> 12.1
         GHIDRA_VERSION=$(echo "$GHIDRA_DIR" | sed 's/ghidra_\(.*\)_PUBLIC/\1/')
         echo "GHIDRA_VERSION=$GHIDRA_VERSION" >> "$GITHUB_ENV"
+        echo "version=$GHIDRA_VERSION" >> "$GITHUB_OUTPUT"
         echo "Resolved Ghidra release: $GHIDRA_DIR (version $GHIDRA_VERSION)"
       env:
         GH_TOKEN: ${{ github.token }}
@@ -136,68 +140,8 @@ jobs:
 
         exit ${TEST_EXIT:-0}
 
-  gui-smoke:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Set up JDK 21
-      uses: actions/setup-java@v5
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-
-    - name: Install GUI dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          xvfb metacity xdotool netcat-openbsd imagemagick unzip curl
-
-    - name: Find latest Ghidra 12.1 release
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        GHIDRA_URL=$(gh api repos/NationalSecurityAgency/ghidra/releases \
-          --jq '[.[] | select(.tag_name | test("^Ghidra_12\\.1(?:\\.[0-9]+)?_build$"))][0].assets
-            | map(select(.name | test("^ghidra_12\\.1(?:\\.[0-9]+)?_PUBLIC_[0-9]+\\.zip$")))
-            | .[0].browser_download_url')
-        echo "GHIDRA_URL=$GHIDRA_URL" >> "$GITHUB_ENV"
-        GHIDRA_DIR=$(basename "$GHIDRA_URL" .zip | sed 's/_[0-9]*$//')
-        echo "GHIDRA_DIR=$GHIDRA_DIR" >> "$GITHUB_ENV"
-        echo "Resolved Ghidra release: $GHIDRA_DIR"
-
-    - name: Download Ghidra
-      run: |
-        wget --no-verbose -O ghidra.zip "$GHIDRA_URL"
-        7z x -bd ghidra.zip
-        echo "GHIDRA_HOME=$PWD/$GHIDRA_DIR" >> "$GITHUB_ENV"
-
-    - name: Download packaged extension artifact
-      uses: actions/download-artifact@v8
-      with:
-        name: GhidraMCP-artifact
-        path: release
-
-    - name: Run GUI smoke test
-      run: |
-        EXT_ZIP=$(ls release/GhidraMCP-next-*-SNAPSHOT.zip | head -1)
-        echo "Extension ZIP: $EXT_ZIP"
-        bash test/gui-smoke/run.sh "$EXT_ZIP"
-
-    - name: Upload GUI smoke diagnostics on failure
-      if: failure() || cancelled()
-      uses: actions/upload-artifact@v7
-      with:
-        name: gui-smoke-diagnostics
-        path: |
-          ${{ runner.temp }}/gui-smoke-artifacts/**
-        if-no-files-found: warn
-
   release:
-    needs: [build, integration-test, gui-smoke]
+    needs: [build, integration-test]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -205,19 +149,6 @@ jobs:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 2
-
-    - name: Find latest Ghidra 12.1 release
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        GHIDRA_URL=$(gh api repos/NationalSecurityAgency/ghidra/releases \
-          --jq '[.[] | select(.tag_name | test("^Ghidra_12\\.1(?:\\.[0-9]+)?_build$"))][0].assets
-            | map(select(.name | test("^ghidra_12\\.1(?:\\.[0-9]+)?_PUBLIC_[0-9]+\\.zip$")))
-            | .[0].browser_download_url')
-        GHIDRA_DIR=$(basename "$GHIDRA_URL" .zip | sed 's/_[0-9]*$//')
-        GHIDRA_VERSION=$(echo "$GHIDRA_DIR" | sed 's/ghidra_\(.*\)_PUBLIC/\1/')
-        echo "GHIDRA_VERSION=$GHIDRA_VERSION" >> "$GITHUB_ENV"
-        echo "Resolved Ghidra version: $GHIDRA_VERSION"
 
     - name: Download packaged extension artifact
       uses: actions/download-artifact@v8
@@ -242,6 +173,7 @@ jobs:
           --title "GhidraMCP-Next for Ghidra $GHIDRA_VERSION" \
           --notes "Built against Ghidra $GHIDRA_VERSION"
       env:
+        GHIDRA_VERSION: ${{ needs.build.outputs.ghidra-version }}
         GH_TOKEN: ${{ github.token }}
 
   gui-smoke:
