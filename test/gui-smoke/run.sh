@@ -54,8 +54,17 @@ die()  { FAIL=1; log "FAIL: $*"; }
 
 dump_diagnostics() {
   log "Dumping diagnostics to $ARTIFACTS_DIR ..."
-  [ -f "$GHIDRA_LOG" ] && cp "$GHIDRA_LOG" "$ARTIFACTS_DIR/" 2>/dev/null || true
-  [ -f "$XVFB_LOG" ]   && cp "$XVFB_LOG"   "$ARTIFACTS_DIR/" 2>/dev/null || true
+  for f in \
+    "$GHIDRA_LOG" \
+    "$XVFB_LOG" \
+    "$TMP_BASE/analyzeHeadless.log" \
+    "$TMP_BASE/wm.log" \
+    "$TMP_BASE/xdotool.log" \
+    "$TMP_BASE/curl.err" \
+    "$TMP_BASE/pre-curl.png"
+  do
+    [ -f "$f" ] && cp "$f" "$ARTIFACTS_DIR/" 2>/dev/null || true
+  done
   if [ -n "${DISPLAY:-}" ]; then
     import -display "$DISPLAY" -window root "$ARTIFACTS_DIR/screen.png" 2>/dev/null || true
   fi
@@ -276,6 +285,12 @@ case "$RESP" in
     die "/list_functions reports 'No program loaded' — plugin not bound to CodeBrowser with the imported program"
     exit 1 ;;
 esac
+# Require at least one function-shaped line: "<name> at <hex_address>".
+if ! printf '%s\n' "$RESP" | grep -Eq '^[^[:space:]].* at [0-9A-Fa-f]+$'; then
+  die "/list_functions response does not look like any function entries"
+  printf '  %s\n' "${RESP:0:400}"
+  exit 1
+fi
 
 # Optional plugin-loaded grep (warn-only).
 if grep -q 'GhidraMCPPlugin loaded' "$GHIDRA_LOG"; then
