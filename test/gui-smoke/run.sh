@@ -41,11 +41,21 @@ export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_CACHE_HOME="$HOME/.cache"
 export XDG_DATA_HOME="$HOME/.local/share"
 export JAVA_TOOL_OPTIONS="-Duser.home=$HOME"
+# Isolated X auth cookie. Without this, Ghidra's launch.sh — which re-resolves
+# HOME in places — and the WM end up writing cookies into the user's real
+# ~/.Xauthority, which can mislead host services that auto-detect a display by
+# matching cookies (e.g. RustDesk) into preferring a leaked Xvfb over :0.
+export XAUTHORITY="$TMP_BASE/Xauthority"
+: > "$XAUTHORITY"
 USER_SETTINGS="$HOME/$USER_DIR_RELATIVE"
 
 XVFB_PID=
 WM_PID=
 GHIDRA_PID=
+XVFB_PGID=
+WM_PGID=
+GHIDRA_PGID=
+DISPLAY_NUM=
 PHASE="init"
 FAIL=0
 
@@ -79,29 +89,59 @@ dump_diagnostics() {
 
 teardown() {
   PHASE="teardown"
-  if [ -n "$GHIDRA_PID" ] && kill -0 "$GHIDRA_PID" 2>/dev/null; then
-    kill "$GHIDRA_PID" 2>/dev/null || true
-    for _ in 1 2 3 4 5; do
-      kill -0 "$GHIDRA_PID" 2>/dev/null || break
-      sleep 1
+  # Reap each spawned process group with SIGTERM, escalate to SIGKILL after
+  # a grace window. Using PGIDs (each child is spawned under setsid) catches
+  # Ghidra's JVM helper processes, Xvfb's xkbcomp, the WM's children, etc.
+  # The previous code killed only the parent PIDs and so could leave Xvfb
+  # behind on any non-clean exit — the workstation leak path.
+  local pgid alive
+  for pgid in "$GHIDRA_PGID" "$WM_PGID" "$XVFB_PGID"; do
+    [ -n "$pgid" ] || continue
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  done
+  for _ in 1 2 3 4 5; do
+    alive=0
+    for pgid in "$GHIDRA_PGID" "$WM_PGID" "$XVFB_PGID"; do
+      [ -n "$pgid" ] || continue
+      kill -0 -- "-$pgid" 2>/dev/null && alive=1
     done
-    kill -9 "$GHIDRA_PID" 2>/dev/null || true
-  fi
-  pkill -P $$ 2>/dev/null || true
-  if [ -n "$WM_PID" ] && kill -0 "$WM_PID" 2>/dev/null; then
-    kill "$WM_PID" 2>/dev/null || true
-  fi
-  if [ -n "$XVFB_PID" ] && kill -0 "$XVFB_PID" 2>/dev/null; then
-    kill "$XVFB_PID" 2>/dev/null || true
+    [ "$alive" -eq 0 ] && break
+    sleep 1
+  done
+  for pgid in "$GHIDRA_PGID" "$WM_PGID" "$XVFB_PGID"; do
+    [ -n "$pgid" ] || continue
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  done
+  # Defensive socket cleanup: a clean Xvfb exit removes its own socket, but
+  # SIGKILL/oom-kill does not. Combined with the linear-scan picker below,
+  # this prevents a previous run's leaked socket from poisoning future runs
+  # or fooling host services that scan /tmp/.X11-unix.
+  if [ -n "$DISPLAY_NUM" ]; then
+    local sock="/tmp/.X11-unix/X$DISPLAY_NUM"
+    local lock="/tmp/.X$DISPLAY_NUM-lock"
+    if [ -e "$sock" ]; then
+      if command -v fuser >/dev/null 2>&1; then
+        fuser "$sock" >/dev/null 2>&1 || rm -f "$sock" 2>/dev/null || true
+      else
+        rm -f "$sock" 2>/dev/null || true
+      fi
+    fi
+    [ -e "$lock" ] && rm -f "$lock" 2>/dev/null || true
   fi
   wait 2>/dev/null || true
 }
 
 trap '[ $FAIL -ne 0 ] && dump_diagnostics; teardown' EXIT
+# Signal traps: Bash does not run the EXIT trap for untrapped signals (notably
+# SIGHUP from SSH drop / terminal close), so trap them explicitly and exit,
+# which fires the EXIT trap above.
+trap 'FAIL=1; exit 130' INT
+trap 'FAIL=1; exit 143' TERM
+trap 'FAIL=1; exit 129' HUP
 
 # --- Phase 1: resolve_env --------------------------------------------------
 PHASE="resolve_env"
-for bin in Xvfb xdotool nc curl unzip import java; do
+for bin in Xvfb xauth mcookie setsid xdotool nc curl unzip import java; do
   command -v "$bin" >/dev/null 2>&1 || { die "missing dep: $bin"; exit 1; }
 done
 # Pick a window manager. Without one, Java/AWT focus management does not work
@@ -169,35 +209,60 @@ fi
 
 # --- Phase 7: launch_ghidra (Xvfb + WM, manual) ---------------------------
 PHASE="launch_ghidra"
-# Pick a likely-unused DISPLAY number to avoid clashing with the user's session.
-DISPLAY_NUM=$(( ( RANDOM % 50 ) + 90 ))
+# Pick a free display number by linear scan over lock + socket files (the
+# convention xvfb-run uses). The previous `(RANDOM % 50) + 90` could collide
+# with a leaked Xvfb's number, fail Xvfb startup, and leave the old server
+# still running — a leak path. A linear scan skips any number whose lock or
+# socket exists.
+DISPLAY_NUM=99
+while [ -e "/tmp/.X$DISPLAY_NUM-lock" ] || [ -e "/tmp/.X11-unix/X$DISPLAY_NUM" ]; do
+  DISPLAY_NUM=$((DISPLAY_NUM + 1))
+  if [ "$DISPLAY_NUM" -gt 999 ]; then
+    die "no free X display number in :99..:999"
+    exit 1
+  fi
+done
 DISPLAY=":$DISPLAY_NUM"
 export DISPLAY
-Xvfb "$DISPLAY" -screen 0 1280x1024x24 >"$XVFB_LOG" 2>&1 &
+
+# Register a cookie for the chosen display BEFORE Xvfb starts so -auth is
+# effective from the very first connection. xauth writes only to XAUTHORITY
+# (set at the top of the script), never to ~/.Xauthority.
+xauth -f "$XAUTHORITY" add "$DISPLAY" . "$(mcookie)" >/dev/null 2>&1 \
+  || { die "xauth add failed for $DISPLAY"; exit 1; }
+
+# setsid puts each long-running child in its own session/PGID. Teardown then
+# reaps the whole subtree with kill -- -PGID, instead of relying on individual
+# PIDs (which previously missed Ghidra's JVM helpers).
+setsid Xvfb "$DISPLAY" -screen 0 1280x1024x24 -auth "$XAUTHORITY" >"$XVFB_LOG" 2>&1 &
 XVFB_PID=$!
+XVFB_PGID=$XVFB_PID  # setsid makes the spawned process its own session/PGID leader
 sleep 1
 if ! kill -0 "$XVFB_PID" 2>/dev/null; then
   die "Xvfb failed to start on $DISPLAY"
   exit 1
 fi
-log "Xvfb $DISPLAY (pid=$XVFB_PID)"
+log "Xvfb $DISPLAY (pid=$XVFB_PID pgid=$XVFB_PGID)"
 
 # Start a minimal window manager so Swing focus and xdotool windowactivate work.
-"$WM_BIN" --display "$DISPLAY" --sm-disable >"$TMP_BASE/wm.log" 2>&1 &
+setsid "$WM_BIN" --display "$DISPLAY" --sm-disable >"$TMP_BASE/wm.log" 2>&1 &
 WM_PID=$!
+WM_PGID=$WM_PID
 sleep 1
 if ! kill -0 "$WM_PID" 2>/dev/null; then
   # Some WMs do not understand --sm-disable; retry without it.
-  "$WM_BIN" --display "$DISPLAY" >"$TMP_BASE/wm.log" 2>&1 &
+  setsid "$WM_BIN" --display "$DISPLAY" >"$TMP_BASE/wm.log" 2>&1 &
   WM_PID=$!
+  WM_PGID=$WM_PID
   sleep 1
 fi
 kill -0 "$WM_PID" 2>/dev/null || { die "$WM_BIN failed to start"; exit 1; }
-log "$WM_BIN (pid=$WM_PID)"
+log "$WM_BIN (pid=$WM_PID pgid=$WM_PGID)"
 
-"$GHIDRA_HOME"/support/launch.sh fg jdk Ghidra "" "" ghidra.GhidraRun "$PROJECT_PARENT/$PROJECT_NAME.gpr" >"$GHIDRA_LOG" 2>&1 &
+setsid "$GHIDRA_HOME"/support/launch.sh fg jdk Ghidra "" "" ghidra.GhidraRun "$PROJECT_PARENT/$PROJECT_NAME.gpr" >"$GHIDRA_LOG" 2>&1 &
 GHIDRA_PID=$!
-log "ghidraRun (pid=$GHIDRA_PID)"
+GHIDRA_PGID=$GHIDRA_PID
+log "ghidraRun (pid=$GHIDRA_PID pgid=$GHIDRA_PGID)"
 
 # --- Phase 8: open_program ------------------------------------------------
 PHASE="open_program"

@@ -194,7 +194,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          xvfb metacity xdotool netcat-openbsd imagemagick unzip curl
+          xvfb xauth metacity xdotool netcat-openbsd imagemagick unzip curl
 
     - name: Find latest Ghidra 12.1 release
       env:
