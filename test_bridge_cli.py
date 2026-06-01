@@ -194,7 +194,10 @@ class BridgeCliTest(unittest.TestCase):
     def test_get_xrefs_to_prefers_json_endpoint(self):
         bridge = load_bridge_module()
         xref = xref_record("00000604", "0000060a", "UNCONDITIONAL_CALL", "main", "helper")
-        response = FakeResponse(json_data={"ok": True, "data": {"xrefs": [xref]}})
+        response = FakeResponse(json_data={
+            "ok": True,
+            "data": {"xrefs": [xref]},
+            "meta": {"api_version": "1", "offset": 2, "limit": 3, "next_offset": 5}})
         calls = []
 
         def fake_get(url, params=None, timeout=None):

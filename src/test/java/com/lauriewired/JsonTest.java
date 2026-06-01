@@ -19,6 +19,24 @@ public class JsonTest extends TestCase {
             Json.envelope(data));
     }
 
+    public void testBuildsPaginatedEnvelopeWithNextOffset() throws Exception {
+        String data = Json.object(Json.field("xrefs", Json.array(Arrays.<String>asList())));
+
+        assertEquals(
+            "{\"ok\":true,\"data\":{\"xrefs\":[]},\"warnings\":[]," +
+            "\"meta\":{\"api_version\":\"1\",\"offset\":0,\"limit\":1,\"next_offset\":1}}",
+            Json.envelope(data, 0, 1, 1));
+    }
+
+    public void testBuildsPaginatedEnvelopeWithoutNextOffsetOnLastPage() throws Exception {
+        String data = Json.object(Json.field("xrefs", Json.array(Arrays.<String>asList())));
+
+        assertEquals(
+            "{\"ok\":true,\"data\":{\"xrefs\":[]},\"warnings\":[]," +
+            "\"meta\":{\"api_version\":\"1\",\"offset\":1,\"limit\":1}}",
+            Json.envelope(data, 1, 1, null));
+    }
+
     public void testBuildsErrorEnvelope() throws Exception {
         assertEquals(
             "{\"ok\":false,\"error\":{\"code\":\"no_program_loaded\"," +

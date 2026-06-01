@@ -16,6 +16,14 @@ public final class Json {
             field("meta", meta()));
     }
 
+    public static String envelope(String dataJson, int offset, int limit, Integer nextOffset) {
+        return object(
+            field("ok", bool(true)),
+            field("data", dataJson),
+            field("warnings", array(new ArrayList<>())),
+            field("meta", meta(offset, limit, nextOffset)));
+    }
+
     public static String errorEnvelope(String code, String message) {
         return object(
             field("ok", bool(false)),
@@ -48,6 +56,10 @@ public final class Json {
 
     public static String bool(boolean value) {
         return Boolean.toString(value);
+    }
+
+    public static String number(int value) {
+        return Integer.toString(value);
     }
 
     public static String escape(String value) {
@@ -95,5 +107,16 @@ public final class Json {
 
     private static String meta() {
         return object(field("api_version", string(ServerMetadata.API_VERSION)));
+    }
+
+    private static String meta(int offset, int limit, Integer nextOffset) {
+        List<String> fields = new ArrayList<>();
+        fields.add(field("api_version", string(ServerMetadata.API_VERSION)));
+        fields.add(field("offset", number(offset)));
+        fields.add(field("limit", number(limit)));
+        if (nextOffset != null) {
+            fields.add(field("next_offset", number(nextOffset)));
+        }
+        return object(fields.toArray(new String[0]));
     }
 }

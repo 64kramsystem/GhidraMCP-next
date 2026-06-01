@@ -29,6 +29,8 @@ public class HeadlessMCPServerParityTest extends TestCase {
         Method function = getStaticStringMethod(headless, "buildFunctionJsonResponse", Map.class);
         Method decompile = getStaticStringMethod(headless, "buildDecompileFunctionJsonResponse", Map.class, String.class);
         Method xrefs = getStaticStringMethod(headless, "buildXrefsJsonResponse", List.class);
+        Method paginatedXrefs = getStaticStringMethod(
+            headless, "buildXrefsJsonResponse", List.class, int.class, int.class, Integer.class);
         Method error = getStaticStringMethod(headless, "buildErrorJsonResponse", String.class, String.class);
         Field jsonContentType = getStaticStringField(headless, "JSON_CONTENT_TYPE");
         List<Map<String, String>> functionRecords = new ArrayList<>();
@@ -62,6 +64,12 @@ public class HeadlessMCPServerParityTest extends TestCase {
         assertEquals(
             invokeServerMetadataXrefs(xrefRecords),
             xrefs.invoke(null, xrefRecords));
+        assertEquals(
+            invokeServerMetadataPaginatedXrefs(xrefRecords, 0, 1, 1),
+            paginatedXrefs.invoke(null, xrefRecords, 0, 1, Integer.valueOf(1)));
+        assertEquals(
+            invokeServerMetadataPaginatedXrefs(xrefRecords, 1, 1, null),
+            paginatedXrefs.invoke(null, xrefRecords, 1, 1, null));
         assertEquals(
             invokeServerMetadataString(
                 "buildErrorJsonResponse",
@@ -195,6 +203,16 @@ public class HeadlessMCPServerParityTest extends TestCase {
     private String invokeServerMetadataXrefs(List<Map<String, String>> xrefs) throws Exception {
         Method method = ServerMetadata.class.getMethod("buildXrefsJsonResponse", List.class);
         return (String) method.invoke(null, xrefs);
+    }
+
+    private String invokeServerMetadataPaginatedXrefs(
+            List<Map<String, String>> xrefs,
+            int offset,
+            int limit,
+            Integer nextOffset) throws Exception {
+        Method method = ServerMetadata.class.getMethod(
+            "buildXrefsJsonResponse", List.class, int.class, int.class, Integer.class);
+        return (String) method.invoke(null, xrefs, offset, limit, nextOffset);
     }
 
     private String invokeHttpResponsesJsonContentType() throws Exception {

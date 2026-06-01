@@ -84,6 +84,8 @@ assert_get "/api/v1/decompile_function?address=$FUNC_ADDR" '"decompile":' "JSON 
 assert_get "/api/v1/decompile_function?address=$FUNC_ADDR" "\"entry\":\"$FUNC_ADDR\"" "JSON decompile_function reports entry"
 assert_get "/api/v1/get_xrefs_to?address=$FUNC_ADDR" '"xrefs":[' "JSON get_xrefs_to"
 assert_get "/api/v1/get_xrefs_from?address=$FUNC_ADDR" '"xrefs":[' "JSON get_xrefs_from"
+assert_get "/api/v1/get_xrefs_to?address=$FUNC_ADDR&offset=0&limit=1" '"offset":0' "JSON get_xrefs_to reports offset"
+assert_get "/api/v1/get_xrefs_to?address=$FUNC_ADDR&offset=0&limit=1" '"limit":1' "JSON get_xrefs_to reports limit"
 assert_get "/list_functions" "$FUNC_NAME" "list_functions"
 assert_get "/get_function_by_address?address=$FUNC_ADDR" "$FUNC_NAME" "get_function_by_address"
 assert_get_nonempty "/get_current_address" "get_current_address"

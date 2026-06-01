@@ -376,7 +376,9 @@ public class HeadlessMCPServer extends GhidraScript {
             for (Reference ref : currentProgram.getReferenceManager().getReferencesTo(addr)) {
                 xrefs.add(xrefRecord(ref));
             }
-            sendJsonResponse(exchange, HeadlessMetadata.buildXrefsJsonResponse(paginateRecords(xrefs, offset, limit)));
+            Page<Map<String, String>> page = paginateRecords(xrefs, offset, limit);
+            sendJsonResponse(exchange,
+                HeadlessMetadata.buildXrefsJsonResponse(page.items, page.offset, page.limit, page.nextOffset));
         });
 
         server.createContext("/xrefs_from", exchange -> {
@@ -413,7 +415,9 @@ public class HeadlessMCPServer extends GhidraScript {
             for (Reference ref : currentProgram.getReferenceManager().getReferencesFrom(addr)) {
                 xrefs.add(xrefRecord(ref));
             }
-            sendJsonResponse(exchange, HeadlessMetadata.buildXrefsJsonResponse(paginateRecords(xrefs, offset, limit)));
+            Page<Map<String, String>> page = paginateRecords(xrefs, offset, limit);
+            sendJsonResponse(exchange,
+                HeadlessMetadata.buildXrefsJsonResponse(page.items, page.offset, page.limit, page.nextOffset));
         });
 
         server.createContext("/function_xrefs", exchange -> {
@@ -657,14 +661,30 @@ public class HeadlessMCPServer extends GhidraScript {
         return function;
     }
 
-    private <T> List<T> paginateRecords(List<T> items, int offset, int limit) {
+    private <T> Page<T> paginateRecords(List<T> items, int offset, int limit) {
         int start = Math.max(0, offset);
-        int end = Math.min(items.size(), start + Math.max(0, limit));
+        int effectiveLimit = Math.max(0, limit);
+        int end = Math.min(items.size(), start + effectiveLimit);
 
         if (start >= items.size()) {
-            return new ArrayList<>();
+            return new Page<>(new ArrayList<>(), start, effectiveLimit, null);
         }
-        return new ArrayList<>(items.subList(start, end));
+        Integer nextOffset = effectiveLimit > 0 && end < items.size() ? end : null;
+        return new Page<>(new ArrayList<>(items.subList(start, end)), start, effectiveLimit, nextOffset);
+    }
+
+    private static class Page<T> {
+        private final List<T> items;
+        private final int offset;
+        private final int limit;
+        private final Integer nextOffset;
+
+        private Page(List<T> items, int offset, int limit, Integer nextOffset) {
+            this.items = items;
+            this.offset = offset;
+            this.limit = limit;
+            this.nextOffset = nextOffset;
+        }
     }
 
     private int parseIntOrDefault(String val, int def) {
@@ -725,6 +745,22 @@ final class HeadlessMetadata {
     }
 
     static String buildXrefsJsonResponse(List<Map<String, String>> xrefs) {
+        return buildXrefsJsonResponseData(xrefs, null, null, null);
+    }
+
+    static String buildXrefsJsonResponse(
+            List<Map<String, String>> xrefs,
+            int offset,
+            int limit,
+            Integer nextOffset) {
+        return buildXrefsJsonResponseData(xrefs, offset, limit, nextOffset);
+    }
+
+    private static String buildXrefsJsonResponseData(
+            List<Map<String, String>> xrefs,
+            Integer offset,
+            Integer limit,
+            Integer nextOffset) {
         List<String> records = new ArrayList<>();
         for (Map<String, String> xref : xrefs) {
             records.add(object(
@@ -735,8 +771,11 @@ final class HeadlessMetadata {
                 field("to_function", buildPrefixedFunctionRecord(xref, "to_function_"))));
         }
 
-        return envelope(object(
-            field("xrefs", array(records))));
+        String data = object(field("xrefs", array(records)));
+        if (offset == null || limit == null) {
+            return envelope(data);
+        }
+        return envelope(data, offset, limit, nextOffset);
     }
 
     static String buildErrorJsonResponse(String code, String message) {
@@ -755,6 +794,14 @@ final class HeadlessMetadata {
             field("data", dataJson),
             field("warnings", array(new ArrayList<>())),
             field("meta", object(field("api_version", string(API_VERSION)))));
+    }
+
+    private static String envelope(String dataJson, int offset, int limit, Integer nextOffset) {
+        return object(
+            field("ok", bool(true)),
+            field("data", dataJson),
+            field("warnings", array(new ArrayList<>())),
+            field("meta", meta(offset, limit, nextOffset)));
     }
 
     private static String object(String... fields) {
@@ -781,6 +828,10 @@ final class HeadlessMetadata {
         return Boolean.toString(value);
     }
 
+    private static String number(int value) {
+        return Integer.toString(value);
+    }
+
     private static String valueOrUnknown(String value) {
         return value == null || value.isBlank() ? "unknown" : value;
     }
@@ -803,6 +854,17 @@ final class HeadlessMetadata {
             field("body_start", string(values.get(prefix + "body_start"))),
             field("body_end", string(values.get(prefix + "body_end"))),
             field("signature", string(values.get(prefix + "signature"))));
+    }
+
+    private static String meta(int offset, int limit, Integer nextOffset) {
+        List<String> fields = new ArrayList<>();
+        fields.add(field("api_version", string(API_VERSION)));
+        fields.add(field("offset", number(offset)));
+        fields.add(field("limit", number(limit)));
+        if (nextOffset != null) {
+            fields.add(field("next_offset", number(nextOffset)));
+        }
+        return object(fields.toArray(new String[0]));
     }
 
     private static String escape(String value) {

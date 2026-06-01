@@ -1488,7 +1488,12 @@ public class GhidraMCPPlugin extends Plugin {
                 refs.add(getXrefRecord(program, refIter.next()));
             }
 
-            return ServerMetadata.buildXrefsJsonResponse(paginateRecords(refs, offset, limit));
+            Page<Map<String, String>> page = paginateRecords(refs, offset, limit);
+            return ServerMetadata.buildXrefsJsonResponse(
+                page.items,
+                page.offset,
+                page.limit,
+                page.nextOffset);
         } catch (Exception e) {
             return ServerMetadata.buildErrorJsonResponse("xref_lookup_failed", e.getMessage());
         }
@@ -1554,7 +1559,12 @@ public class GhidraMCPPlugin extends Plugin {
                 refs.add(getXrefRecord(program, ref));
             }
 
-            return ServerMetadata.buildXrefsJsonResponse(paginateRecords(refs, offset, limit));
+            Page<Map<String, String>> page = paginateRecords(refs, offset, limit);
+            return ServerMetadata.buildXrefsJsonResponse(
+                page.items,
+                page.offset,
+                page.limit,
+                page.nextOffset);
         } catch (Exception e) {
             return ServerMetadata.buildErrorJsonResponse("xref_lookup_failed", e.getMessage());
         }
@@ -1877,14 +1887,30 @@ public class GhidraMCPPlugin extends Plugin {
         return String.join("\n", sub);
     }
 
-    private <T> List<T> paginateRecords(List<T> items, int offset, int limit) {
+    private <T> Page<T> paginateRecords(List<T> items, int offset, int limit) {
         int start = Math.max(0, offset);
-        int end = Math.min(items.size(), start + Math.max(0, limit));
+        int effectiveLimit = Math.max(0, limit);
+        int end = Math.min(items.size(), start + effectiveLimit);
 
         if (start >= items.size()) {
-            return new ArrayList<>();
+            return new Page<>(new ArrayList<>(), start, effectiveLimit, null);
         }
-        return new ArrayList<>(items.subList(start, end));
+        Integer nextOffset = effectiveLimit > 0 && end < items.size() ? end : null;
+        return new Page<>(new ArrayList<>(items.subList(start, end)), start, effectiveLimit, nextOffset);
+    }
+
+    private static class Page<T> {
+        private final List<T> items;
+        private final int offset;
+        private final int limit;
+        private final Integer nextOffset;
+
+        private Page(List<T> items, int offset, int limit, Integer nextOffset) {
+            this.items = items;
+            this.offset = offset;
+            this.limit = limit;
+            this.nextOffset = nextOffset;
+        }
     }
 
     /**

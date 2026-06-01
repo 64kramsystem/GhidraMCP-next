@@ -134,6 +134,35 @@ public class ServerMetadataTest extends TestCase {
             response);
     }
 
+    public void testPaginatedXrefsJsonResponseReportsNextOffsetWhenTruncated() throws Exception {
+        List<Map<String, String>> page = new ArrayList<>();
+        page.add(xrefRecord(
+            "00000604",
+            "0000060a",
+            "UNCONDITIONAL_CALL",
+            functionDetails("main", "Global", "00000600", "00000600", "00000609", "void main(void)"),
+            functionDetails("helper", "Global", "0000060a", "0000060a", "00000612", "void helper(void)")));
+
+        String response = ServerMetadata.buildXrefsJsonResponse(page, 0, 1, 1);
+
+        assertTrue(response.contains("\"meta\":{\"api_version\":\"1\",\"offset\":0,\"limit\":1,\"next_offset\":1}"));
+    }
+
+    public void testPaginatedXrefsJsonResponseOmitsNextOffsetOnFinalPage() throws Exception {
+        List<Map<String, String>> page = new ArrayList<>();
+        page.add(xrefRecord(
+            "00000610",
+            "0000060a",
+            "DATA",
+            functionDetails("main", "Global", "00000600", "00000600", "00000609", "void main(void)"),
+            functionDetails("helper", "Global", "0000060a", "0000060a", "00000612", "void helper(void)")));
+
+        String response = ServerMetadata.buildXrefsJsonResponse(page, 1, 1, null);
+
+        assertTrue(response.contains("\"meta\":{\"api_version\":\"1\",\"offset\":1,\"limit\":1}"));
+        assertFalse(response.contains("next_offset"));
+    }
+
     public void testErrorJsonResponseUsesCodeAndMessage() throws Exception {
         String response = invokeServerMetadataString(
             "buildErrorJsonResponse",

@@ -74,6 +74,22 @@ public final class ServerMetadata {
     }
 
     public static String buildXrefsJsonResponse(List<Map<String, String>> xrefs) {
+        return buildXrefsJsonResponseData(xrefs, null, null, null);
+    }
+
+    public static String buildXrefsJsonResponse(
+            List<Map<String, String>> xrefs,
+            int offset,
+            int limit,
+            Integer nextOffset) {
+        return buildXrefsJsonResponseData(xrefs, offset, limit, nextOffset);
+    }
+
+    private static String buildXrefsJsonResponseData(
+            List<Map<String, String>> xrefs,
+            Integer offset,
+            Integer limit,
+            Integer nextOffset) {
         List<String> records = new ArrayList<>();
         for (Map<String, String> xref : xrefs) {
             records.add(Json.object(
@@ -84,8 +100,11 @@ public final class ServerMetadata {
                 Json.field("to_function", buildPrefixedFunctionRecord(xref, "to_function_"))));
         }
 
-        return Json.envelope(Json.object(
-            Json.field("xrefs", Json.array(records))));
+        String data = Json.object(Json.field("xrefs", Json.array(records)));
+        if (offset == null || limit == null) {
+            return Json.envelope(data);
+        }
+        return Json.envelope(data, offset, limit, nextOffset);
     }
 
     public static String buildErrorJsonResponse(String code, String message) {

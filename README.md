@@ -45,7 +45,9 @@ those endpoints and falls back to legacy text endpoints for older plugin
 builds. The bridge normalizes legacy `list_functions` fallback into the
 structured `{"name", "address"}` shape, and legacy xref fallback into the
 canonical structured xref shape with blank function-detail fields when older
-text endpoints cannot provide them. JSON list endpoints are not paginated yet.
+text endpoints cannot provide them. Paginated JSON endpoints include
+`meta.offset` and `meta.limit`; `meta.next_offset` is present only when another
+page is available. JSON list endpoints are not paginated yet.
 
 ## Building from source
 
