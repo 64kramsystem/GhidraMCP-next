@@ -68,6 +68,10 @@ echo
 
 echo "=== Read endpoints ==="
 
+assert_get "/health" "status: ok" "health"
+assert_get "/health" "program_loaded: true" "health reports program"
+assert_get "/version" "plugin: GhidraMCP-next" "version"
+assert_get "/version" "api_version: 1" "version reports API"
 assert_get "/list_functions" "$FUNC_NAME" "list_functions"
 assert_get "/get_function_by_address?address=$FUNC_ADDR" "$FUNC_NAME" "get_function_by_address"
 assert_get_nonempty "/get_current_address" "get_current_address"

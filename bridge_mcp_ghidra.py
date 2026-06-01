@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "requests>=2,<3",
-#     "mcp>=1.2.0,<2",
+#     "mcp>=1.8.0,<2",
 # ]
 # ///
 
@@ -292,10 +292,10 @@ def main():
     parser.add_argument("--ghidra-server", type=str, default=DEFAULT_GHIDRA_SERVER,
                         help=f"Ghidra server URL, default: {DEFAULT_GHIDRA_SERVER}")
     parser.add_argument("--mcp-host", type=str, default="127.0.0.1",
-                        help="Host to run MCP server on (only used for sse), default: 127.0.0.1")
+                        help="Host to run MCP server on for HTTP transports, default: 127.0.0.1")
     parser.add_argument("--mcp-port", type=int,
-                        help="Port to run MCP server on (only used for sse), default: 8081")
-    parser.add_argument("--transport", type=str, default="stdio", choices=["stdio", "sse"],
+                        help="Port to run MCP server on for HTTP transports, default: 8081")
+    parser.add_argument("--transport", type=str, default="stdio", choices=["stdio", "sse", "streamable-http"],
                         help="Transport protocol for MCP, default: stdio")
     args = parser.parse_args()
     
@@ -304,7 +304,7 @@ def main():
     if args.ghidra_server:
         ghidra_server_url = args.ghidra_server
     
-    if args.transport == "sse":
+    if args.transport in ("sse", "streamable-http"):
         try:
             # Set up logging
             log_level = logging.INFO
@@ -324,10 +324,11 @@ def main():
                 mcp.settings.port = 8081
 
             logger.info(f"Connecting to Ghidra server at {ghidra_server_url}")
-            logger.info(f"Starting MCP server on http://{mcp.settings.host}:{mcp.settings.port}/sse")
+            endpoint = "/sse" if args.transport == "sse" else "/mcp"
+            logger.info(f"Starting MCP server on http://{mcp.settings.host}:{mcp.settings.port}{endpoint}")
             logger.info(f"Using transport: {args.transport}")
 
-            mcp.run(transport="sse")
+            mcp.run(transport=args.transport)
         except KeyboardInterrupt:
             logger.info("Server stopped by user")
     else:
@@ -335,4 +336,3 @@ def main():
         
 if __name__ == "__main__":
     main()
-

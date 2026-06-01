@@ -49,7 +49,7 @@ public class HeadlessMCPServer extends GhidraScript {
             port = Integer.parseInt(envPort);
         }
 
-        server = HttpServer.create(new InetSocketAddress(port), 0);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         registerEndpoints();
         server.start();
         println("HeadlessMCPServer started on port " + port);
@@ -65,6 +65,19 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/shutdown", exchange -> {
             sendResponse(exchange, "Shutting down");
             shutdownLatch.countDown();
+        });
+
+        server.createContext("/health", exchange -> {
+            sendResponse(exchange, "status: ok\n" +
+                "program_loaded: true\n" +
+                "program_name: " + currentProgram.getName());
+        });
+
+        server.createContext("/version", exchange -> {
+            sendResponse(exchange, "plugin: GhidraMCP-next\n" +
+                "api_version: 1\n" +
+                "ghidra_version: " + getGhidraVersion() + "\n" +
+                "java_version: " + System.getProperty("java.version"));
         });
 
         // Read endpoints

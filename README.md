@@ -20,11 +20,20 @@ Download the latest [release](https://github.com/64kramsystem/GhidraMCP-next/rel
 
 Each release ZIP targets the exact Ghidra version named in the release title; install the artifact matching your Ghidra build.
 
-The plugin starts an HTTP server on port 8080 (configurable via Edit > Tool Options > GhidraMCP HTTP Server).
+The plugin starts an HTTP server bound to `127.0.0.1:8080` by default
+(configurable via Edit > Tool Options > GhidraMCP HTTP Server).
+
+Keep the server bound to `127.0.0.1` unless you fully trust the network path.
+The HTTP API can read and modify the open Ghidra program and does not yet
+provide authentication for remote clients. Use SSH forwarding instead of a
+public bind when connecting from another machine.
 
 ## MCP client setup
 
 See the [upstream README](https://github.com/LaurieWired/GhidraMCP#mcp-clients) for Claude Desktop, Cline, and other MCP client configurations. Use `bridge_mcp_ghidra.py` from the release.
+
+The bridge defaults to MCP `stdio`. It also accepts `--transport
+streamable-http` for clients that connect to a local HTTP MCP server.
 
 ## Building from source
 

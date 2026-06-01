@@ -2,6 +2,7 @@ package com.lauriewired;
 
 import ghidra.framework.plugintool.Plugin;
 import ghidra.framework.plugintool.PluginTool;
+import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.GlobalNamespace;
 import ghidra.program.model.listing.*;
@@ -70,6 +71,7 @@ public class GhidraMCPPlugin extends Plugin {
     private HttpServer server;
     private static final String OPTION_CATEGORY_NAME = "GhidraMCP HTTP Server";
     private static final String PORT_OPTION_NAME = "Server Port";
+    private static final String BIND_HOST_OPTION_NAME = "Bind Host";
     private static final int DEFAULT_PORT = 8080;
 
     public GhidraMCPPlugin(PluginTool tool) {
@@ -81,6 +83,11 @@ public class GhidraMCPPlugin extends Plugin {
         options.registerOption(PORT_OPTION_NAME, DEFAULT_PORT,
             null, // No help location for now
             "The network port number the embedded HTTP server will listen on. " +
+            "Requires Ghidra restart or plugin reload to take effect after changing.");
+        options.registerOption(BIND_HOST_OPTION_NAME, HttpServerConfig.DEFAULT_BIND_HOST,
+            null, // No help location for now
+            "The network interface the embedded HTTP server will bind to. " +
+            "Use 127.0.0.1 unless you fully trust the network. " +
             "Requires Ghidra restart or plugin reload to take effect after changing.");
 
         try {
@@ -96,6 +103,7 @@ public class GhidraMCPPlugin extends Plugin {
         // Read the configured port
         Options options = tool.getOptions(OPTION_CATEGORY_NAME);
         int port = options.getInt(PORT_OPTION_NAME, DEFAULT_PORT);
+        String bindHost = options.getString(BIND_HOST_OPTION_NAME, HttpServerConfig.DEFAULT_BIND_HOST);
 
         // Stop existing server if running (e.g., if plugin is reloaded)
         if (server != null) {
@@ -104,7 +112,15 @@ public class GhidraMCPPlugin extends Plugin {
             server = null;
         }
 
-        server = HttpServer.create(new InetSocketAddress(port), 0);
+        server = HttpServer.create(HttpServerConfig.createBindAddress(bindHost, port), 0);
+
+        server.createContext("/health", exchange -> {
+            sendResponse(exchange, getHealth());
+        });
+
+        server.createContext("/version", exchange -> {
+            sendResponse(exchange, getVersion());
+        });
 
         // Each listing endpoint uses offset & limit from query params:
         server.createContext("/methods", exchange -> {
@@ -345,7 +361,7 @@ public class GhidraMCPPlugin extends Plugin {
         new Thread(() -> {
             try {
                 server.start();
-                Msg.info(this, "GhidraMCP HTTP server started on port " + port);
+                Msg.info(this, "GhidraMCP HTTP server started on " + bindHost + ":" + port);
             } catch (Exception e) {
                 Msg.error(this, "Failed to start HTTP server on port " + port + ". Port might be in use.", e);
                 server = null; // Ensure server isn't considered running
@@ -356,6 +372,18 @@ public class GhidraMCPPlugin extends Plugin {
     // ----------------------------------------------------------------------------------
     // Pagination-aware listing methods
     // ----------------------------------------------------------------------------------
+
+    private String getHealth() {
+        Program program = getCurrentProgram();
+        String programName = program != null ? program.getName() : null;
+        return ServerMetadata.buildHealthResponse(programName);
+    }
+
+    private String getVersion() {
+        return ServerMetadata.buildVersionResponse(
+            Application.getApplicationVersion(),
+            System.getProperty("java.version"));
+    }
 
     private String getAllFunctionNames(int offset, int limit) {
         Program program = getCurrentProgram();
@@ -417,7 +445,6 @@ public class GhidraMCPPlugin extends Plugin {
         List<String> lines = new ArrayList<>();
         while (it.hasNext()) {
             Symbol s = it.next();
-            // On older Ghidra, "export" is recognized via isExternalEntryPoint()
             if (s.isExternalEntryPoint()) {
                 lines.add(s.getName() + " -> " + s.getAddress());
             }
