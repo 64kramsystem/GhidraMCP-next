@@ -356,12 +356,28 @@ public class GhidraMCPPlugin extends Plugin {
             sendResponse(exchange, getXrefsTo(address, offset, limit));
         });
 
+        server.createContext("/api/v1/get_xrefs_to", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            sendJsonResponse(exchange, getXrefsToJson(address, offset, limit));
+        });
+
         server.createContext("/xrefs_from", exchange -> {
             Map<String, String> qparams = parseQueryParams(exchange);
             String address = qparams.get("address");
             int offset = parseIntOrDefault(qparams.get("offset"), 0);
             int limit = parseIntOrDefault(qparams.get("limit"), 100);
             sendResponse(exchange, getXrefsFrom(address, offset, limit));
+        });
+
+        server.createContext("/api/v1/get_xrefs_from", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            sendJsonResponse(exchange, getXrefsFromJson(address, offset, limit));
         });
 
         server.createContext("/function_xrefs", exchange -> {
@@ -795,7 +811,13 @@ public class GhidraMCPPlugin extends Plugin {
         }
 
         try {
-            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Address addr = parseAddressOrNull(program, addressStr);
+            if (addr == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addressStr);
+            }
+
             Function func = getFunctionForAddress(program, addr);
 
             if (func == null) {
@@ -903,6 +925,15 @@ public class GhidraMCPPlugin extends Plugin {
         return func;
     }
 
+    private Address parseAddressOrNull(Program program, String addressStr) {
+        try {
+            return program.getAddressFactory().getAddress(addressStr);
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
     /**
      * Decompile a function at the given address
      */
@@ -911,12 +942,13 @@ public class GhidraMCPPlugin extends Plugin {
         if (program == null) return "No program loaded";
         if (addressStr == null || addressStr.isEmpty()) return "Address is required";
 
+        DecompInterface decomp = null;
         try {
             Address addr = program.getAddressFactory().getAddress(addressStr);
             Function func = getFunctionForAddress(program, addr);
             if (func == null) return "No function found at or containing address " + addressStr;
 
-            DecompInterface decomp = new DecompInterface();
+            decomp = new DecompInterface();
             decomp.openProgram(program);
             DecompileResults result = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
 
@@ -925,6 +957,11 @@ public class GhidraMCPPlugin extends Plugin {
                 : "Decompilation failed";
         } catch (Exception e) {
             return "Error decompiling function: " + e.getMessage();
+        }
+        finally {
+            if (decomp != null) {
+                decomp.dispose();
+            }
         }
     }
 
@@ -937,7 +974,13 @@ public class GhidraMCPPlugin extends Plugin {
 
         DecompInterface decomp = null;
         try {
-            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Address addr = parseAddressOrNull(program, addressStr);
+            if (addr == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addressStr);
+            }
+
             Function func = getFunctionForAddress(program, addr);
             if (func == null) {
                 return ServerMetadata.buildErrorJsonResponse(
@@ -1424,6 +1467,33 @@ public class GhidraMCPPlugin extends Plugin {
         }
     }
 
+    private String getXrefsToJson(String addressStr, int offset, int limit) {
+        Program program = getCurrentProgram();
+        if (program == null) return ServerMetadata.buildNoProgramJsonResponse();
+        if (addressStr == null || addressStr.isEmpty()) {
+            return ServerMetadata.buildErrorJsonResponse("address_required", "Address is required");
+        }
+
+        try {
+            Address addr = parseAddressOrNull(program, addressStr);
+            if (addr == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addressStr);
+            }
+
+            List<Map<String, String>> refs = new ArrayList<>();
+            ReferenceIterator refIter = program.getReferenceManager().getReferencesTo(addr);
+            while (refIter.hasNext()) {
+                refs.add(getXrefRecord(program, refIter.next()));
+            }
+
+            return ServerMetadata.buildXrefsJsonResponse(paginateRecords(refs, offset, limit));
+        } catch (Exception e) {
+            return ServerMetadata.buildErrorJsonResponse("xref_lookup_failed", e.getMessage());
+        }
+    }
+
     /**
      * Get all references from a specific address (xref from)
      */
@@ -1461,6 +1531,70 @@ public class GhidraMCPPlugin extends Plugin {
         } catch (Exception e) {
             return "Error getting references from address: " + e.getMessage();
         }
+    }
+
+    private String getXrefsFromJson(String addressStr, int offset, int limit) {
+        Program program = getCurrentProgram();
+        if (program == null) return ServerMetadata.buildNoProgramJsonResponse();
+        if (addressStr == null || addressStr.isEmpty()) {
+            return ServerMetadata.buildErrorJsonResponse("address_required", "Address is required");
+        }
+
+        try {
+            Address addr = parseAddressOrNull(program, addressStr);
+            if (addr == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addressStr);
+            }
+
+            List<Map<String, String>> refs = new ArrayList<>();
+            Reference[] references = program.getReferenceManager().getReferencesFrom(addr);
+            for (Reference ref : references) {
+                refs.add(getXrefRecord(program, ref));
+            }
+
+            return ServerMetadata.buildXrefsJsonResponse(paginateRecords(refs, offset, limit));
+        } catch (Exception e) {
+            return ServerMetadata.buildErrorJsonResponse("xref_lookup_failed", e.getMessage());
+        }
+    }
+
+    private Map<String, String> getXrefRecord(Program program, Reference ref) {
+        Map<String, String> xref = new LinkedHashMap<>();
+        Address fromAddr = ref.getFromAddress();
+        Address toAddr = ref.getToAddress();
+        xref.put("from_address", fromAddr != null ? fromAddr.toString() : "");
+        xref.put("to_address", toAddr != null ? toAddr.toString() : "");
+        xref.put("reference_type", ref.getReferenceType() != null ? ref.getReferenceType().getName() : "");
+
+        FunctionManager functionManager = program.getFunctionManager();
+        putPrefixedFunctionRecord(xref, "from_function_",
+            fromAddr != null ? functionManager.getFunctionContaining(fromAddr) : null);
+        putPrefixedFunctionRecord(xref, "to_function_",
+            toAddr != null ? functionManager.getFunctionContaining(toAddr) : null);
+        return xref;
+    }
+
+    private void putPrefixedFunctionRecord(Map<String, String> target, String prefix, Function function) {
+        Map<String, String> record = function != null ? getRichFunctionRecord(function) : emptyFunctionRecord();
+        target.put(prefix + "name", record.get("name"));
+        target.put(prefix + "namespace", record.get("namespace"));
+        target.put(prefix + "entry", record.get("entry"));
+        target.put(prefix + "body_start", record.get("body_start"));
+        target.put(prefix + "body_end", record.get("body_end"));
+        target.put(prefix + "signature", record.get("signature"));
+    }
+
+    private Map<String, String> emptyFunctionRecord() {
+        Map<String, String> function = new LinkedHashMap<>();
+        function.put("name", "");
+        function.put("namespace", "");
+        function.put("entry", "");
+        function.put("body_start", "");
+        function.put("body_end", "");
+        function.put("signature", "");
+        return function;
     }
 
     /**
@@ -1741,6 +1875,16 @@ public class GhidraMCPPlugin extends Plugin {
         }
         List<String> sub = items.subList(start, end);
         return String.join("\n", sub);
+    }
+
+    private <T> List<T> paginateRecords(List<T> items, int offset, int limit) {
+        int start = Math.max(0, offset);
+        int end = Math.min(items.size(), start + Math.max(0, limit));
+
+        if (start >= items.size()) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(items.subList(start, end));
     }
 
     /**

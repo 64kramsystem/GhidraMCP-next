@@ -28,6 +28,7 @@ public class HeadlessMCPServerParityTest extends TestCase {
         Method functions = getStaticStringMethod(headless, "buildListFunctionsJsonResponse", List.class);
         Method function = getStaticStringMethod(headless, "buildFunctionJsonResponse", Map.class);
         Method decompile = getStaticStringMethod(headless, "buildDecompileFunctionJsonResponse", Map.class, String.class);
+        Method xrefs = getStaticStringMethod(headless, "buildXrefsJsonResponse", List.class);
         Method error = getStaticStringMethod(headless, "buildErrorJsonResponse", String.class, String.class);
         Field jsonContentType = getStaticStringField(headless, "JSON_CONTENT_TYPE");
         List<Map<String, String>> functionRecords = new ArrayList<>();
@@ -35,6 +36,10 @@ public class HeadlessMCPServerParityTest extends TestCase {
         functionRecords.add(functionRecord("helper\"\\fn\n", "0000060a"));
         Map<String, String> functionDetails = functionDetails(
             "main", "Global", "00000600", "00000600", "00000609", "void main(void)");
+        Map<String, String> helperDetails = functionDetails(
+            "helper", "Global", "0000060a", "0000060a", "00000612", "void helper(void)");
+        List<Map<String, String>> xrefRecords = new ArrayList<>();
+        xrefRecords.add(xrefRecord("00000604", "0000060a", "UNCONDITIONAL_CALL", functionDetails, helperDetails));
 
         assertEquals(
             ServerMetadata.buildHealthJsonResponse("sample\"\\bin\n"),
@@ -54,6 +59,9 @@ public class HeadlessMCPServerParityTest extends TestCase {
                 functionDetails,
                 "void main(void) {\n}\n"),
             decompile.invoke(null, functionDetails, "void main(void) {\n}\n"));
+        assertEquals(
+            invokeServerMetadataXrefs(xrefRecords),
+            xrefs.invoke(null, xrefRecords));
         assertEquals(
             invokeServerMetadataString(
                 "buildErrorJsonResponse",
@@ -152,9 +160,41 @@ public class HeadlessMCPServerParityTest extends TestCase {
         return function;
     }
 
+    private Map<String, String> xrefRecord(
+            String fromAddress,
+            String toAddress,
+            String referenceType,
+            Map<String, String> fromFunction,
+            Map<String, String> toFunction) {
+        Map<String, String> xref = new LinkedHashMap<>();
+        xref.put("from_address", fromAddress);
+        xref.put("to_address", toAddress);
+        xref.put("reference_type", referenceType);
+        putPrefixedFunction(xref, "from_function_", fromFunction);
+        putPrefixedFunction(xref, "to_function_", toFunction);
+        return xref;
+    }
+
+    private void putPrefixedFunction(
+            Map<String, String> target,
+            String prefix,
+            Map<String, String> function) {
+        target.put(prefix + "name", function.get("name"));
+        target.put(prefix + "namespace", function.get("namespace"));
+        target.put(prefix + "entry", function.get("entry"));
+        target.put(prefix + "body_start", function.get("body_start"));
+        target.put(prefix + "body_end", function.get("body_end"));
+        target.put(prefix + "signature", function.get("signature"));
+    }
+
     private String invokeServerMetadataListFunctions(List<Map<String, String>> functions) throws Exception {
         Method method = ServerMetadata.class.getMethod("buildListFunctionsJsonResponse", List.class);
         return (String) method.invoke(null, functions);
+    }
+
+    private String invokeServerMetadataXrefs(List<Map<String, String>> xrefs) throws Exception {
+        Method method = ServerMetadata.class.getMethod("buildXrefsJsonResponse", List.class);
+        return (String) method.invoke(null, xrefs);
     }
 
     private String invokeHttpResponsesJsonContentType() throws Exception {

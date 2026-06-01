@@ -73,6 +73,21 @@ public final class ServerMetadata {
             Json.field("decompile", Json.string(decompile))));
     }
 
+    public static String buildXrefsJsonResponse(List<Map<String, String>> xrefs) {
+        List<String> records = new ArrayList<>();
+        for (Map<String, String> xref : xrefs) {
+            records.add(Json.object(
+                Json.field("from_address", Json.string(xref.get("from_address"))),
+                Json.field("to_address", Json.string(xref.get("to_address"))),
+                Json.field("reference_type", Json.string(xref.get("reference_type"))),
+                Json.field("from_function", buildPrefixedFunctionRecord(xref, "from_function_")),
+                Json.field("to_function", buildPrefixedFunctionRecord(xref, "to_function_"))));
+        }
+
+        return Json.envelope(Json.object(
+            Json.field("xrefs", Json.array(records))));
+    }
+
     public static String buildErrorJsonResponse(String code, String message) {
         return Json.errorEnvelope(code, message);
     }
@@ -89,5 +104,15 @@ public final class ServerMetadata {
             Json.field("body_start", Json.string(function.get("body_start"))),
             Json.field("body_end", Json.string(function.get("body_end"))),
             Json.field("signature", Json.string(function.get("signature"))));
+    }
+
+    private static String buildPrefixedFunctionRecord(Map<String, String> values, String prefix) {
+        return Json.object(
+            Json.field("name", Json.string(values.get(prefix + "name"))),
+            Json.field("namespace", Json.string(values.get(prefix + "namespace"))),
+            Json.field("entry", Json.string(values.get(prefix + "entry"))),
+            Json.field("body_start", Json.string(values.get(prefix + "body_start"))),
+            Json.field("body_end", Json.string(values.get(prefix + "body_end"))),
+            Json.field("signature", Json.string(values.get(prefix + "signature"))));
     }
 }

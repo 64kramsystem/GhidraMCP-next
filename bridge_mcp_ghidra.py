@@ -127,6 +127,76 @@ def parse_legacy_function_record(lines: list):
 
     return record if record["name"] or record["entry"] else "\n".join(lines)
 
+def empty_function_record(name: str = "", entry: str = "") -> dict:
+    return {
+        "name": name,
+        "namespace": "",
+        "entry": entry,
+        "body_start": "",
+        "body_end": "",
+        "signature": "",
+    }
+
+def xref_record(
+    from_address: str = "",
+    to_address: str = "",
+    reference_type: str = "",
+    from_function_name: str = "",
+    to_function_name: str = "",
+) -> dict:
+    return {
+        "from_address": from_address,
+        "to_address": to_address,
+        "reference_type": reference_type,
+        "from_function": empty_function_record(from_function_name),
+        "to_function": empty_function_record(to_function_name),
+    }
+
+def split_legacy_xref_line(line: str, prefix: str):
+    if not line.startswith(prefix):
+        return None
+
+    body = line.removeprefix(prefix).strip()
+    reference_type = ""
+    if body.endswith("]") and " [" in body:
+        body, reference_type = body.rsplit(" [", 1)
+        reference_type = reference_type[:-1]
+    return body, reference_type
+
+def parse_legacy_xrefs_to(lines: list, target_address: str) -> list:
+    xrefs = []
+    for line in lines:
+        parsed = split_legacy_xref_line(line, "From ")
+        if parsed is None:
+            continue
+
+        body, reference_type = parsed
+        from_function_name = ""
+        if " in " in body:
+            from_address, from_function_name = body.split(" in ", 1)
+        else:
+            from_address = body
+        xrefs.append(xref_record(from_address, target_address, reference_type, from_function_name, ""))
+    return xrefs or lines
+
+def parse_legacy_xrefs_from(lines: list, source_address: str) -> list:
+    xrefs = []
+    for line in lines:
+        parsed = split_legacy_xref_line(line, "To ")
+        if parsed is None:
+            continue
+
+        body, reference_type = parsed
+        to_function_name = ""
+        if " to function " in body:
+            to_address, to_function_name = body.split(" to function ", 1)
+        elif " to data " in body:
+            to_address, _ = body.split(" to data ", 1)
+        else:
+            to_address = body
+        xrefs.append(xref_record(source_address, to_address, reference_type, "", to_function_name))
+    return xrefs or lines
+
 @mcp.tool()
 def list_methods(offset: int = 0, limit: int = 100) -> list:
     """
@@ -321,7 +391,12 @@ def get_xrefs_to(address: str, offset: int = 0, limit: int = 100) -> list:
     Returns:
         List of references to the specified address
     """
-    return safe_get("xrefs_to", {"address": address, "offset": offset, "limit": limit})
+    return safe_get_json(
+        "api/v1/get_xrefs_to",
+        "xrefs_to",
+        {"address": address, "offset": offset, "limit": limit},
+        data_key="xrefs",
+        fallback_transform=lambda lines: parse_legacy_xrefs_to(lines, address))
 
 @mcp.tool()
 def get_xrefs_from(address: str, offset: int = 0, limit: int = 100) -> list:
@@ -336,7 +411,12 @@ def get_xrefs_from(address: str, offset: int = 0, limit: int = 100) -> list:
     Returns:
         List of references from the specified address
     """
-    return safe_get("xrefs_from", {"address": address, "offset": offset, "limit": limit})
+    return safe_get_json(
+        "api/v1/get_xrefs_from",
+        "xrefs_from",
+        {"address": address, "offset": offset, "limit": limit},
+        data_key="xrefs",
+        fallback_transform=lambda lines: parse_legacy_xrefs_from(lines, address))
 
 @mcp.tool()
 def get_function_xrefs(name: str, offset: int = 0, limit: int = 100) -> list:

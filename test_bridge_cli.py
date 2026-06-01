@@ -191,9 +191,116 @@ class BridgeCliTest(unittest.TestCase):
         self.assertTrue(calls[0][0].endswith("/api/v1/decompile_function"))
         self.assertTrue(calls[1][0].endswith("/decompile_function"))
 
+    def test_get_xrefs_to_prefers_json_endpoint(self):
+        bridge = load_bridge_module()
+        xref = xref_record("00000604", "0000060a", "UNCONDITIONAL_CALL", "main", "helper")
+        response = FakeResponse(json_data={"ok": True, "data": {"xrefs": [xref]}})
+        calls = []
+
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return response
+
+        with mock.patch.object(bridge.requests, "get", side_effect=fake_get):
+            self.assertEqual([xref], bridge.get_xrefs_to("0000060a", offset=2, limit=3))
+
+        self.assertEqual(1, len(calls))
+        self.assertTrue(calls[0][0].endswith("/api/v1/get_xrefs_to"))
+        self.assertEqual({"address": "0000060a", "offset": 2, "limit": 3}, calls[0][1])
+
+    def test_get_xrefs_to_falls_back_to_legacy_text_as_dicts(self):
+        bridge = load_bridge_module()
+        responses = [
+            FakeResponse(ok=False, status_code=404, text="not found"),
+            FakeResponse(text="From 00000604 in main [UNCONDITIONAL_CALL]\n"),
+        ]
+        calls = []
+
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return responses.pop(0)
+
+        with mock.patch.object(bridge.requests, "get", side_effect=fake_get):
+            self.assertEqual([
+                xref_record("00000604", "0000060a", "UNCONDITIONAL_CALL", "main", "")
+            ], bridge.get_xrefs_to("0000060a"))
+
+        self.assertEqual(2, len(calls))
+        self.assertTrue(calls[0][0].endswith("/api/v1/get_xrefs_to"))
+        self.assertTrue(calls[1][0].endswith("/xrefs_to"))
+
+    def test_get_xrefs_from_prefers_json_endpoint(self):
+        bridge = load_bridge_module()
+        xref = xref_record("00000604", "0000060a", "UNCONDITIONAL_CALL", "main", "helper")
+        response = FakeResponse(json_data={"ok": True, "data": {"xrefs": [xref]}})
+        calls = []
+
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return response
+
+        with mock.patch.object(bridge.requests, "get", side_effect=fake_get):
+            self.assertEqual([xref], bridge.get_xrefs_from("00000604"))
+
+        self.assertEqual(1, len(calls))
+        self.assertTrue(calls[0][0].endswith("/api/v1/get_xrefs_from"))
+
+    def test_get_xrefs_from_falls_back_to_legacy_text_as_dicts(self):
+        bridge = load_bridge_module()
+        responses = [
+            FakeResponse(ok=False, status_code=404, text="not found"),
+            FakeResponse(text="To 0000060a to function helper [UNCONDITIONAL_CALL]\n"),
+        ]
+        calls = []
+
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return responses.pop(0)
+
+        with mock.patch.object(bridge.requests, "get", side_effect=fake_get):
+            self.assertEqual([
+                xref_record("00000604", "0000060a", "UNCONDITIONAL_CALL", "", "helper")
+            ], bridge.get_xrefs_from("00000604"))
+
+        self.assertEqual(2, len(calls))
+        self.assertTrue(calls[0][0].endswith("/api/v1/get_xrefs_from"))
+        self.assertTrue(calls[1][0].endswith("/xrefs_from"))
+
+    def test_json_error_envelope_degrades_without_crashing_dict_typed_tool(self):
+        bridge = load_bridge_module()
+        response = FakeResponse(json_data={
+            "ok": False,
+            "error": {"code": "invalid_address", "message": "Invalid address: bad"}})
+
+        with mock.patch.object(bridge.requests, "get", return_value=response):
+            self.assertEqual(
+                ["Error invalid_address: Invalid address: bad"],
+                bridge.get_function_by_address("bad"))
+
 
 def parse_version(value):
     return tuple(int(part) for part in value.split("."))
+
+
+def empty_function_record(name="", entry=""):
+    return {
+        "name": name,
+        "namespace": "",
+        "entry": entry,
+        "body_start": "",
+        "body_end": "",
+        "signature": "",
+    }
+
+
+def xref_record(from_address, to_address, reference_type, from_function_name, to_function_name):
+    return {
+        "from_address": from_address,
+        "to_address": to_address,
+        "reference_type": reference_type,
+        "from_function": empty_function_record(from_function_name),
+        "to_function": empty_function_record(to_function_name),
+    }
 
 
 class FakeFastMCP:

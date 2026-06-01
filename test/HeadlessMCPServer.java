@@ -122,7 +122,7 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/get_function_by_address", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             String addrStr = params.get("address");
-            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            Address addr = parseAddressOrNull(addrStr);
             Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
             if (func == null) {
                 func = currentProgram.getFunctionManager().getFunctionContaining(addr);
@@ -141,7 +141,19 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/api/v1/get_function_by_address", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             String addrStr = params.get("address");
-            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            if (addrStr == null || addrStr.isEmpty()) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "address_required",
+                    "Address is required"));
+                return;
+            }
+            Address addr = parseAddressOrNull(addrStr);
+            if (addr == null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addrStr));
+                return;
+            }
             Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
             if (func == null) {
                 func = currentProgram.getFunctionManager().getFunctionContaining(addr);
@@ -163,7 +175,7 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/decompile_function", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             String addrStr = params.get("address");
-            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            Address addr = parseAddressOrNull(addrStr);
             Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
             if (func == null) {
                 func = currentProgram.getFunctionManager().getFunctionContaining(addr);
@@ -185,7 +197,19 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/api/v1/decompile_function", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             String addrStr = params.get("address");
-            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            if (addrStr == null || addrStr.isEmpty()) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "address_required",
+                    "Address is required"));
+                return;
+            }
+            Address addr = parseAddressOrNull(addrStr);
+            if (addr == null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addrStr));
+                return;
+            }
             Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
             if (func == null) {
                 func = currentProgram.getFunctionManager().getFunctionContaining(addr);
@@ -210,7 +234,7 @@ public class HeadlessMCPServer extends GhidraScript {
         server.createContext("/disassemble_function", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             String addrStr = params.get("address");
-            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            Address addr = parseAddressOrNull(addrStr);
             Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
             if (func == null) {
                 sendResponse(exchange, "No function at address " + addrStr);
@@ -329,6 +353,32 @@ public class HeadlessMCPServer extends GhidraScript {
             sendResponse(exchange, sb.toString().trim());
         });
 
+        server.createContext("/api/v1/get_xrefs_to", exchange -> {
+            Map<String, String> params = parseQueryParams(exchange);
+            String addrStr = params.get("address");
+            if (addrStr == null || addrStr.isEmpty()) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "address_required",
+                    "Address is required"));
+                return;
+            }
+            Address addr = parseAddressOrNull(addrStr);
+            if (addr == null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addrStr));
+                return;
+            }
+
+            int offset = parseIntOrDefault(params.get("offset"), 0);
+            int limit = parseIntOrDefault(params.get("limit"), 100);
+            List<Map<String, String>> xrefs = new ArrayList<>();
+            for (Reference ref : currentProgram.getReferenceManager().getReferencesTo(addr)) {
+                xrefs.add(xrefRecord(ref));
+            }
+            sendJsonResponse(exchange, HeadlessMetadata.buildXrefsJsonResponse(paginateRecords(xrefs, offset, limit)));
+        });
+
         server.createContext("/xrefs_from", exchange -> {
             Map<String, String> params = parseQueryParams(exchange);
             Address addr = currentProgram.getAddressFactory().getAddress(params.get("address"));
@@ -338,6 +388,32 @@ public class HeadlessMCPServer extends GhidraScript {
                   .append(" [").append(ref.getReferenceType()).append("]\n");
             }
             sendResponse(exchange, sb.toString().trim());
+        });
+
+        server.createContext("/api/v1/get_xrefs_from", exchange -> {
+            Map<String, String> params = parseQueryParams(exchange);
+            String addrStr = params.get("address");
+            if (addrStr == null || addrStr.isEmpty()) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "address_required",
+                    "Address is required"));
+                return;
+            }
+            Address addr = parseAddressOrNull(addrStr);
+            if (addr == null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "invalid_address",
+                    "Invalid address: " + addrStr));
+                return;
+            }
+
+            int offset = parseIntOrDefault(params.get("offset"), 0);
+            int limit = parseIntOrDefault(params.get("limit"), 100);
+            List<Map<String, String>> xrefs = new ArrayList<>();
+            for (Reference ref : currentProgram.getReferenceManager().getReferencesFrom(addr)) {
+                xrefs.add(xrefRecord(ref));
+            }
+            sendJsonResponse(exchange, HeadlessMetadata.buildXrefsJsonResponse(paginateRecords(xrefs, offset, limit)));
         });
 
         server.createContext("/function_xrefs", exchange -> {
@@ -535,6 +611,62 @@ public class HeadlessMCPServer extends GhidraScript {
         return function;
     }
 
+    private Address parseAddressOrNull(String addressStr) {
+        try {
+            return currentProgram.getAddressFactory().getAddress(addressStr);
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Map<String, String> xrefRecord(Reference ref) {
+        Map<String, String> xref = new LinkedHashMap<>();
+        Address fromAddr = ref.getFromAddress();
+        Address toAddr = ref.getToAddress();
+        xref.put("from_address", fromAddr != null ? fromAddr.toString() : "");
+        xref.put("to_address", toAddr != null ? toAddr.toString() : "");
+        xref.put("reference_type", ref.getReferenceType() != null ? ref.getReferenceType().getName() : "");
+
+        FunctionManager functionManager = currentProgram.getFunctionManager();
+        putPrefixedFunctionRecord(xref, "from_function_",
+            fromAddr != null ? functionManager.getFunctionContaining(fromAddr) : null);
+        putPrefixedFunctionRecord(xref, "to_function_",
+            toAddr != null ? functionManager.getFunctionContaining(toAddr) : null);
+        return xref;
+    }
+
+    private void putPrefixedFunctionRecord(Map<String, String> target, String prefix, Function function) {
+        Map<String, String> record = function != null ? richFunctionRecord(function) : emptyFunctionRecord();
+        target.put(prefix + "name", record.get("name"));
+        target.put(prefix + "namespace", record.get("namespace"));
+        target.put(prefix + "entry", record.get("entry"));
+        target.put(prefix + "body_start", record.get("body_start"));
+        target.put(prefix + "body_end", record.get("body_end"));
+        target.put(prefix + "signature", record.get("signature"));
+    }
+
+    private Map<String, String> emptyFunctionRecord() {
+        Map<String, String> function = new LinkedHashMap<>();
+        function.put("name", "");
+        function.put("namespace", "");
+        function.put("entry", "");
+        function.put("body_start", "");
+        function.put("body_end", "");
+        function.put("signature", "");
+        return function;
+    }
+
+    private <T> List<T> paginateRecords(List<T> items, int offset, int limit) {
+        int start = Math.max(0, offset);
+        int end = Math.min(items.size(), start + Math.max(0, limit));
+
+        if (start >= items.size()) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(items.subList(start, end));
+    }
+
     private int parseIntOrDefault(String val, int def) {
         if (val == null) return def;
         try { return Integer.parseInt(val); } catch (NumberFormatException e) { return def; }
@@ -592,6 +724,21 @@ final class HeadlessMetadata {
             field("decompile", string(decompile))));
     }
 
+    static String buildXrefsJsonResponse(List<Map<String, String>> xrefs) {
+        List<String> records = new ArrayList<>();
+        for (Map<String, String> xref : xrefs) {
+            records.add(object(
+                field("from_address", string(xref.get("from_address"))),
+                field("to_address", string(xref.get("to_address"))),
+                field("reference_type", string(xref.get("reference_type"))),
+                field("from_function", buildPrefixedFunctionRecord(xref, "from_function_")),
+                field("to_function", buildPrefixedFunctionRecord(xref, "to_function_"))));
+        }
+
+        return envelope(object(
+            field("xrefs", array(records))));
+    }
+
     static String buildErrorJsonResponse(String code, String message) {
         return object(
             field("ok", bool(false)),
@@ -646,6 +793,16 @@ final class HeadlessMetadata {
             field("body_start", string(function.get("body_start"))),
             field("body_end", string(function.get("body_end"))),
             field("signature", string(function.get("signature"))));
+    }
+
+    private static String buildPrefixedFunctionRecord(Map<String, String> values, String prefix) {
+        return object(
+            field("name", string(values.get(prefix + "name"))),
+            field("namespace", string(values.get(prefix + "namespace"))),
+            field("entry", string(values.get(prefix + "entry"))),
+            field("body_start", string(values.get(prefix + "body_start"))),
+            field("body_end", string(values.get(prefix + "body_end"))),
+            field("signature", string(values.get(prefix + "signature"))));
     }
 
     private static String escape(String value) {

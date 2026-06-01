@@ -112,6 +112,28 @@ public class ServerMetadataTest extends TestCase {
             response);
     }
 
+    public void testXrefsJsonResponseIncludesAddressesTypeAndFunctionContext() throws Exception {
+        List<Map<String, String>> xrefs = new ArrayList<>();
+        xrefs.add(xrefRecord(
+            "00000604",
+            "0000060a",
+            "UNCONDITIONAL_CALL",
+            functionDetails("main", "Global", "00000600", "00000600", "00000609", "void main(void)"),
+            functionDetails("helper", "Global", "0000060a", "0000060a", "00000612", "void helper(void)")));
+
+        String response = ServerMetadata.buildXrefsJsonResponse(xrefs);
+
+        assertEquals(
+            "{\"ok\":true,\"data\":{\"xrefs\":[{\"from_address\":\"00000604\"," +
+            "\"to_address\":\"0000060a\",\"reference_type\":\"UNCONDITIONAL_CALL\"," +
+            "\"from_function\":{\"name\":\"main\",\"namespace\":\"Global\",\"entry\":\"00000600\"," +
+            "\"body_start\":\"00000600\",\"body_end\":\"00000609\",\"signature\":\"void main(void)\"}," +
+            "\"to_function\":{\"name\":\"helper\",\"namespace\":\"Global\",\"entry\":\"0000060a\"," +
+            "\"body_start\":\"0000060a\",\"body_end\":\"00000612\",\"signature\":\"void helper(void)\"}}]}," +
+            "\"warnings\":[],\"meta\":{\"api_version\":\"1\"}}",
+            response);
+    }
+
     public void testErrorJsonResponseUsesCodeAndMessage() throws Exception {
         String response = invokeServerMetadataString(
             "buildErrorJsonResponse",
@@ -147,6 +169,33 @@ public class ServerMetadataTest extends TestCase {
         function.put("body_end", bodyEnd);
         function.put("signature", signature);
         return function;
+    }
+
+    private Map<String, String> xrefRecord(
+            String fromAddress,
+            String toAddress,
+            String referenceType,
+            Map<String, String> fromFunction,
+            Map<String, String> toFunction) {
+        Map<String, String> xref = new LinkedHashMap<>();
+        xref.put("from_address", fromAddress);
+        xref.put("to_address", toAddress);
+        xref.put("reference_type", referenceType);
+        putPrefixedFunction(xref, "from_function_", fromFunction);
+        putPrefixedFunction(xref, "to_function_", toFunction);
+        return xref;
+    }
+
+    private void putPrefixedFunction(
+            Map<String, String> target,
+            String prefix,
+            Map<String, String> function) {
+        target.put(prefix + "name", function.get("name"));
+        target.put(prefix + "namespace", function.get("namespace"));
+        target.put(prefix + "entry", function.get("entry"));
+        target.put(prefix + "body_start", function.get("body_start"));
+        target.put(prefix + "body_end", function.get("body_end"));
+        target.put(prefix + "signature", function.get("signature"));
     }
 
     private String invokeServerMetadataString(String methodName, Object... args) throws Exception {
