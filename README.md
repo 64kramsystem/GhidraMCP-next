@@ -35,6 +35,15 @@ See the [upstream README](https://github.com/LaurieWired/GhidraMCP#mcp-clients) 
 The bridge defaults to MCP `stdio`. It also accepts `--transport
 streamable-http` for clients that connect to a local HTTP MCP server.
 
+For setup checks, the plugin exposes legacy text endpoints at `/health` and
+`/version`, plus JSON envelope equivalents at `/api/v1/health` and
+`/api/v1/version`. Function listing is also available as structured JSON at
+`/api/v1/list_functions`, `/api/v1/get_function_by_address`, and
+`/api/v1/decompile_function`; the Python bridge prefers those endpoints and
+falls back to legacy text endpoints for older plugin builds. The bridge
+normalizes legacy `list_functions` fallback into the structured
+`{"name", "address"}` shape. JSON list endpoints are not paginated yet.
+
 ## Building from source
 
 ```bash

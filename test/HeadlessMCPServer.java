@@ -80,6 +80,17 @@ public class HeadlessMCPServer extends GhidraScript {
                 "java_version: " + System.getProperty("java.version"));
         });
 
+        server.createContext("/api/v1/health", exchange -> {
+            sendJsonResponse(exchange, HeadlessMetadata.buildHealthJsonResponse(currentProgram.getName()));
+        });
+
+        server.createContext("/api/v1/version", exchange -> {
+            sendJsonResponse(exchange,
+                HeadlessMetadata.buildVersionJsonResponse(
+                    getGhidraVersion(),
+                    System.getProperty("java.version")));
+        });
+
         // Read endpoints
         server.createContext("/list_functions", exchange -> {
             StringBuilder sb = new StringBuilder();
@@ -91,6 +102,21 @@ public class HeadlessMCPServer extends GhidraScript {
                 }
             }
             sendResponse(exchange, sb.toString().trim());
+        });
+
+        server.createContext("/api/v1/list_functions", exchange -> {
+            List<Map<String, String>> functions = new ArrayList<>();
+            FunctionIterator funcs = currentProgram.getFunctionManager().getFunctions(true);
+            while (funcs.hasNext()) {
+                Function f = funcs.next();
+                if (!f.isExternal()) {
+                    Map<String, String> function = new LinkedHashMap<>();
+                    function.put("name", f.getName());
+                    function.put("address", f.getEntryPoint().toString());
+                    functions.add(function);
+                }
+            }
+            sendJsonResponse(exchange, HeadlessMetadata.buildListFunctionsJsonResponse(functions));
         });
 
         server.createContext("/get_function_by_address", exchange -> {
@@ -109,6 +135,24 @@ public class HeadlessMCPServer extends GhidraScript {
                 sendResponse(exchange, resp);
             } else {
                 sendResponse(exchange, "No function found at address " + addrStr);
+            }
+        });
+
+        server.createContext("/api/v1/get_function_by_address", exchange -> {
+            Map<String, String> params = parseQueryParams(exchange);
+            String addrStr = params.get("address");
+            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
+            if (func == null) {
+                func = currentProgram.getFunctionManager().getFunctionContaining(addr);
+            }
+            if (func != null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildFunctionJsonResponse(richFunctionRecord(func)));
+            }
+            else {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "function_not_found",
+                    "No function found at or containing address " + addrStr));
             }
         });
 
@@ -136,6 +180,31 @@ public class HeadlessMCPServer extends GhidraScript {
                 : "Decompilation failed";
             decomp.dispose();
             sendResponse(exchange, decompiled);
+        });
+
+        server.createContext("/api/v1/decompile_function", exchange -> {
+            Map<String, String> params = parseQueryParams(exchange);
+            String addrStr = params.get("address");
+            Address addr = currentProgram.getAddressFactory().getAddress(addrStr);
+            Function func = currentProgram.getFunctionManager().getFunctionAt(addr);
+            if (func == null) {
+                func = currentProgram.getFunctionManager().getFunctionContaining(addr);
+            }
+            if (func == null) {
+                sendJsonResponse(exchange, HeadlessMetadata.buildErrorJsonResponse(
+                    "function_not_found",
+                    "No function found at or containing address " + addrStr));
+                return;
+            }
+            DecompInterface decomp = new DecompInterface();
+            decomp.openProgram(currentProgram);
+            DecompileResults results = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+            String decompiled = results.getDecompiledFunction() != null
+                ? results.getDecompiledFunction().getC()
+                : "Decompilation failed";
+            decomp.dispose();
+            sendJsonResponse(exchange,
+                HeadlessMetadata.buildDecompileFunctionJsonResponse(richFunctionRecord(func), decompiled));
         });
 
         server.createContext("/disassemble_function", exchange -> {
@@ -445,8 +514,180 @@ public class HeadlessMCPServer extends GhidraScript {
         }
     }
 
+    private void sendJsonResponse(HttpExchange exchange, String response) throws IOException {
+        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", HeadlessMetadata.JSON_CONTENT_TYPE);
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private Map<String, String> richFunctionRecord(Function func) {
+        Map<String, String> function = new LinkedHashMap<>();
+        Namespace parent = func.getParentNamespace();
+        function.put("name", func.getName());
+        function.put("namespace", parent != null ? parent.getName(true) : "");
+        function.put("entry", func.getEntryPoint().toString());
+        function.put("body_start", func.getBody().getMinAddress().toString());
+        function.put("body_end", func.getBody().getMaxAddress().toString());
+        function.put("signature", func.getSignature().getPrototypeString());
+        return function;
+    }
+
     private int parseIntOrDefault(String val, int def) {
         if (val == null) return def;
         try { return Integer.parseInt(val); } catch (NumberFormatException e) { return def; }
+    }
+}
+
+final class HeadlessMetadata {
+
+    static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+
+    private static final String PLUGIN_NAME = "GhidraMCP-next";
+    private static final String API_VERSION = "1";
+
+    private HeadlessMetadata() {
+    }
+
+    static String buildHealthJsonResponse(String programName) {
+        boolean programLoaded = programName != null && !programName.isBlank();
+        String safeProgramName = programLoaded ? programName : "";
+
+        return envelope(object(
+            field("status", string("ok")),
+            field("program_loaded", bool(programLoaded)),
+            field("program_name", string(safeProgramName))));
+    }
+
+    static String buildVersionJsonResponse(String ghidraVersion, String javaVersion) {
+        return envelope(object(
+            field("plugin", string(PLUGIN_NAME)),
+            field("api_version", string(API_VERSION)),
+            field("ghidra_version", string(valueOrUnknown(ghidraVersion))),
+            field("java_version", string(valueOrUnknown(javaVersion)))));
+    }
+
+    static String buildListFunctionsJsonResponse(List<Map<String, String>> functions) {
+        List<String> records = new ArrayList<>();
+        for (Map<String, String> function : functions) {
+            records.add(object(
+                field("name", string(function.get("name"))),
+                field("address", string(function.get("address")))));
+        }
+
+        return envelope(object(
+            field("functions", array(records))));
+    }
+
+    static String buildFunctionJsonResponse(Map<String, String> function) {
+        return envelope(object(
+            field("function", buildFunctionRecord(function))));
+    }
+
+    static String buildDecompileFunctionJsonResponse(Map<String, String> function, String decompile) {
+        return envelope(object(
+            field("function", buildFunctionRecord(function)),
+            field("decompile", string(decompile))));
+    }
+
+    static String buildErrorJsonResponse(String code, String message) {
+        return object(
+            field("ok", bool(false)),
+            field("error", object(
+                field("code", string(code)),
+                field("message", string(message)))),
+            field("warnings", array(new ArrayList<>())),
+            field("meta", object(field("api_version", string(API_VERSION)))));
+    }
+
+    private static String envelope(String dataJson) {
+        return object(
+            field("ok", bool(true)),
+            field("data", dataJson),
+            field("warnings", array(new ArrayList<>())),
+            field("meta", object(field("api_version", string(API_VERSION)))));
+    }
+
+    private static String object(String... fields) {
+        return "{" + String.join(",", fields) + "}";
+    }
+
+    private static String field(String name, String jsonValue) {
+        return string(name) + ":" + jsonValue;
+    }
+
+    private static String array(Iterable<String> jsonValues) {
+        List<String> values = new ArrayList<>();
+        for (String value : jsonValues) {
+            values.add(value);
+        }
+        return "[" + String.join(",", values) + "]";
+    }
+
+    private static String string(String value) {
+        return "\"" + escape(value) + "\"";
+    }
+
+    private static String bool(boolean value) {
+        return Boolean.toString(value);
+    }
+
+    private static String valueOrUnknown(String value) {
+        return value == null || value.isBlank() ? "unknown" : value;
+    }
+
+    private static String buildFunctionRecord(Map<String, String> function) {
+        return object(
+            field("name", string(function.get("name"))),
+            field("namespace", string(function.get("namespace"))),
+            field("entry", string(function.get("entry"))),
+            field("body_start", string(function.get("body_start"))),
+            field("body_end", string(function.get("body_end"))),
+            field("signature", string(function.get("signature"))));
+    }
+
+    private static String escape(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        StringBuilder escaped = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '"':
+                    escaped.append("\\\"");
+                    break;
+                case '\\':
+                    escaped.append("\\\\");
+                    break;
+                case '\b':
+                    escaped.append("\\b");
+                    break;
+                case '\f':
+                    escaped.append("\\f");
+                    break;
+                case '\n':
+                    escaped.append("\\n");
+                    break;
+                case '\r':
+                    escaped.append("\\r");
+                    break;
+                case '\t':
+                    escaped.append("\\t");
+                    break;
+                default:
+                    if (ch < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) ch));
+                    }
+                    else {
+                        escaped.append(ch);
+                    }
+                    break;
+            }
+        }
+        return escaped.toString();
     }
 }

@@ -42,6 +42,40 @@ def safe_get(endpoint: str, params: dict = None) -> list:
     except Exception as e:
         return [f"Request failed: {str(e)}"]
 
+def safe_get_json(
+    endpoint: str,
+    fallback_endpoint: str,
+    params: dict = None,
+    data_key: str = None,
+    fallback_transform = None,
+):
+    """
+    Prefer a JSON envelope endpoint and fall back to a legacy text endpoint.
+    """
+    if params is None:
+        params = {}
+
+    url = urljoin(ghidra_server_url, endpoint)
+
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        response.encoding = 'utf-8'
+        if response.ok:
+            envelope = response.json()
+            if envelope.get("ok"):
+                data = envelope.get("data", {})
+                return data.get(data_key, []) if data_key else data
+
+            error = envelope.get("error", {})
+            code = error.get("code", "unknown_error")
+            message = error.get("message", response.text.strip())
+            return [f"Error {code}: {message}"]
+    except Exception:
+        pass
+
+    fallback = safe_get(fallback_endpoint, params)
+    return fallback_transform(fallback) if fallback_transform else fallback
+
 def safe_post(endpoint: str, data: dict | str) -> str:
     try:
         url = urljoin(ghidra_server_url, endpoint)
@@ -56,6 +90,42 @@ def safe_post(endpoint: str, data: dict | str) -> str:
             return f"Error {response.status_code}: {response.text.strip()}"
     except Exception as e:
         return f"Request failed: {str(e)}"
+
+def parse_legacy_function_list(lines: list) -> list:
+    functions = []
+    for line in lines:
+        if " at " not in line:
+            continue
+        name, address = line.rsplit(" at ", 1)
+        functions.append({"name": name, "address": address})
+    return functions or lines
+
+def parse_legacy_function_record(lines: list):
+    record = {
+        "name": "",
+        "namespace": "",
+        "entry": "",
+        "body_start": "",
+        "body_end": "",
+        "signature": "",
+    }
+    for line in lines:
+        if line.startswith("Function: "):
+            name_and_address = line.removeprefix("Function: ")
+            if " at " in name_and_address:
+                name, entry = name_and_address.rsplit(" at ", 1)
+                record["name"] = name
+                record["entry"] = entry
+        elif line.startswith("Signature: "):
+            record["signature"] = line.removeprefix("Signature: ")
+        elif line.startswith("Entry: "):
+            record["entry"] = line.removeprefix("Entry: ")
+        elif line.startswith("Body: "):
+            body = line.removeprefix("Body: ")
+            if " - " in body:
+                record["body_start"], record["body_end"] = body.split(" - ", 1)
+
+    return record if record["name"] or record["entry"] else "\n".join(lines)
 
 @mcp.tool()
 def list_methods(offset: int = 0, limit: int = 100) -> list:
@@ -148,11 +218,16 @@ def rename_variable(function_name: str, old_name: str, new_name: str) -> str:
     })
 
 @mcp.tool()
-def get_function_by_address(address: str) -> str:
+def get_function_by_address(address: str) -> dict | str:
     """
     Get a function by its address.
     """
-    return "\n".join(safe_get("get_function_by_address", {"address": address}))
+    return safe_get_json(
+        "api/v1/get_function_by_address",
+        "get_function_by_address",
+        {"address": address},
+        data_key="function",
+        fallback_transform=parse_legacy_function_record)
 
 @mcp.tool()
 def get_current_address() -> str:
@@ -173,14 +248,23 @@ def list_functions() -> list:
     """
     List all functions in the database.
     """
-    return safe_get("list_functions")
+    return safe_get_json(
+        "api/v1/list_functions",
+        "list_functions",
+        data_key="functions",
+        fallback_transform=parse_legacy_function_list)
 
 @mcp.tool()
 def decompile_function_by_address(address: str) -> str:
     """
     Decompile a function at the given address.
     """
-    return "\n".join(safe_get("decompile_function", {"address": address}))
+    return safe_get_json(
+        "api/v1/decompile_function",
+        "decompile_function",
+        {"address": address},
+        data_key="decompile",
+        fallback_transform=lambda lines: "\n".join(lines))
 
 @mcp.tool()
 def disassemble_function(address: str) -> list:

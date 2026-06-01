@@ -51,7 +51,6 @@ import com.sun.net.httpserver.HttpServer;
 
 import javax.swing.SwingUtilities;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
@@ -120,6 +119,14 @@ public class GhidraMCPPlugin extends Plugin {
 
         server.createContext("/version", exchange -> {
             sendResponse(exchange, getVersion());
+        });
+
+        server.createContext("/api/v1/health", exchange -> {
+            sendJsonResponse(exchange, getHealthJson());
+        });
+
+        server.createContext("/api/v1/version", exchange -> {
+            sendJsonResponse(exchange, getVersionJson());
         });
 
         // Each listing endpoint uses offset & limit from query params:
@@ -215,6 +222,12 @@ public class GhidraMCPPlugin extends Plugin {
             sendResponse(exchange, getFunctionByAddress(address));
         });
 
+        server.createContext("/api/v1/get_function_by_address", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            sendJsonResponse(exchange, getFunctionByAddressJson(address));
+        });
+
         server.createContext("/get_current_address", exchange -> {
             sendResponse(exchange, getCurrentAddress());
         });
@@ -227,10 +240,20 @@ public class GhidraMCPPlugin extends Plugin {
             sendResponse(exchange, listFunctions());
         });
 
+        server.createContext("/api/v1/list_functions", exchange -> {
+            sendJsonResponse(exchange, listFunctionsJson());
+        });
+
         server.createContext("/decompile_function", exchange -> {
             Map<String, String> qparams = parseQueryParams(exchange);
             String address = qparams.get("address");
             sendResponse(exchange, decompileFunctionByAddress(address));
+        });
+
+        server.createContext("/api/v1/decompile_function", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            sendJsonResponse(exchange, decompileFunctionByAddressJson(address));
         });
 
         server.createContext("/disassemble_function", exchange -> {
@@ -379,8 +402,20 @@ public class GhidraMCPPlugin extends Plugin {
         return ServerMetadata.buildHealthResponse(programName);
     }
 
+    private String getHealthJson() {
+        Program program = getCurrentProgram();
+        String programName = program != null ? program.getName() : null;
+        return ServerMetadata.buildHealthJsonResponse(programName);
+    }
+
     private String getVersion() {
         return ServerMetadata.buildVersionResponse(
+            Application.getApplicationVersion(),
+            System.getProperty("java.version"));
+    }
+
+    private String getVersionJson() {
+        return ServerMetadata.buildVersionJsonResponse(
             Application.getApplicationVersion(),
             System.getProperty("java.version"));
     }
@@ -752,6 +787,30 @@ public class GhidraMCPPlugin extends Plugin {
         }
     }
 
+    private String getFunctionByAddressJson(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return ServerMetadata.buildNoProgramJsonResponse();
+        if (addressStr == null || addressStr.isEmpty()) {
+            return ServerMetadata.buildErrorJsonResponse("address_required", "Address is required");
+        }
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Function func = getFunctionForAddress(program, addr);
+
+            if (func == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "function_not_found",
+                    "No function found at or containing address " + addressStr);
+            }
+
+            return ServerMetadata.buildFunctionJsonResponse(getRichFunctionRecord(func));
+        }
+        catch (Exception e) {
+            return ServerMetadata.buildErrorJsonResponse("function_lookup_failed", e.getMessage());
+        }
+    }
+
     /**
      * Get current address selected in Ghidra GUI
      */
@@ -793,13 +852,43 @@ public class GhidraMCPPlugin extends Plugin {
         if (program == null) return "No program loaded";
 
         StringBuilder result = new StringBuilder();
-        for (Function func : program.getFunctionManager().getFunctions(true)) {
+        for (Map<String, String> function : getFunctionRecords(program)) {
             result.append(String.format("%s at %s\n", 
-                func.getName(), 
-                func.getEntryPoint()));
+                function.get("name"),
+                function.get("address")));
         }
 
         return result.toString();
+    }
+
+    private String listFunctionsJson() {
+        Program program = getCurrentProgram();
+        if (program == null) return ServerMetadata.buildNoProgramJsonResponse();
+
+        return ServerMetadata.buildListFunctionsJsonResponse(getFunctionRecords(program));
+    }
+
+    private List<Map<String, String>> getFunctionRecords(Program program) {
+        List<Map<String, String>> functions = new ArrayList<>();
+        for (Function func : program.getFunctionManager().getFunctions(true)) {
+            Map<String, String> function = new LinkedHashMap<>();
+            function.put("name", func.getName());
+            function.put("address", func.getEntryPoint().toString());
+            functions.add(function);
+        }
+        return functions;
+    }
+
+    private Map<String, String> getRichFunctionRecord(Function func) {
+        Map<String, String> function = new LinkedHashMap<>();
+        Namespace parent = func.getParentNamespace();
+        function.put("name", func.getName());
+        function.put("namespace", parent != null ? parent.getName(true) : "");
+        function.put("entry", func.getEntryPoint().toString());
+        function.put("body_start", func.getBody().getMinAddress().toString());
+        function.put("body_end", func.getBody().getMaxAddress().toString());
+        function.put("signature", func.getSignature().getPrototypeString());
+        return function;
     }
 
     /**
@@ -836,6 +925,44 @@ public class GhidraMCPPlugin extends Plugin {
                 : "Decompilation failed";
         } catch (Exception e) {
             return "Error decompiling function: " + e.getMessage();
+        }
+    }
+
+    private String decompileFunctionByAddressJson(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return ServerMetadata.buildNoProgramJsonResponse();
+        if (addressStr == null || addressStr.isEmpty()) {
+            return ServerMetadata.buildErrorJsonResponse("address_required", "Address is required");
+        }
+
+        DecompInterface decomp = null;
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Function func = getFunctionForAddress(program, addr);
+            if (func == null) {
+                return ServerMetadata.buildErrorJsonResponse(
+                    "function_not_found",
+                    "No function found at or containing address " + addressStr);
+            }
+
+            decomp = new DecompInterface();
+            decomp.openProgram(program);
+            DecompileResults result = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+            if (result == null || !result.decompileCompleted() || result.getDecompiledFunction() == null) {
+                return ServerMetadata.buildErrorJsonResponse("decompile_failed", "Decompilation failed");
+            }
+
+            return ServerMetadata.buildDecompileFunctionJsonResponse(
+                getRichFunctionRecord(func),
+                result.getDecompiledFunction().getC());
+        }
+        catch (Exception e) {
+            return ServerMetadata.buildErrorJsonResponse("decompile_failed", e.getMessage());
+        }
+        finally {
+            if (decomp != null) {
+                decomp.dispose();
+            }
         }
     }
 
@@ -1653,12 +1780,11 @@ public class GhidraMCPPlugin extends Plugin {
     }
 
     private void sendResponse(HttpExchange exchange, String response) throws IOException {
-        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-        exchange.sendResponseHeaders(200, bytes.length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(bytes);
-        }
+        HttpResponses.sendText(exchange, response);
+    }
+
+    private void sendJsonResponse(HttpExchange exchange, String response) throws IOException {
+        HttpResponses.sendJson(exchange, response);
     }
 
     @Override
